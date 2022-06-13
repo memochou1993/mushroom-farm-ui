@@ -14,6 +14,27 @@
             />
           </v-btn>
         </v-row>
+        <v-row v-if="remainingSeconds > 0" justify="center">
+          <v-col :cols="8">
+            <v-row justify="center">
+              <v-col :cols="12" class="text-center">
+                Countdown to Lauch!
+              </v-col>
+              <v-col :cols="3" class="text-center">
+                {{ remainingTime.days }} Days
+              </v-col>
+              <v-col :cols="3" class="text-center">
+                {{ remainingTime.hours }} Hours
+              </v-col>
+              <v-col :cols="3" class="text-center">
+                {{ remainingTime.minutes }} Minutes
+              </v-col>
+              <v-col :cols="3" class="text-center">
+                {{ remainingTime.seconds }} Seconds
+              </v-col>
+            </v-row>
+          </v-col>
+        </v-row>
         <v-row justify="center">
           <v-col :cols="10">
             <div class="text-center text-h5 font-weight-re my-6 cursor-default">
@@ -42,11 +63,14 @@
                       <v-col :cols="12">
                         <v-text-field
                           v-model="amount"
+                          :min="0"
+                          autofocus
                           dense
                           hide-details
                           outlined
                           solo
                           suffix="BNB"
+                          type="number"
                           class="mb-3"
                         />
                         <v-btn block :disabled="!account" @click="buyMushrooms">
@@ -74,7 +98,7 @@
                 </v-card>
               </v-col>
               <v-col :cols="12" :sm="6" :lg="6">
-                <v-card :height="250" outlined class="mb-6">
+                <v-card :height="220" outlined class="mb-6">
                   <v-card-title class="text-uppercase">Nutrition</v-card-title>
                   <v-card-text>
                     <v-row>
@@ -91,7 +115,7 @@
                     </v-row>
                   </v-card-text>
                 </v-card>
-                <v-card :height="250 - 24" outlined>
+                <v-card :height="280 - 24" outlined>
                   <v-card-title class="text-uppercase">Referral Link</v-card-title>
                   <v-card-text>
                     Earn 15% of the BNB used to multiply mushroom from anyone who uses your referral link.
@@ -118,6 +142,7 @@
 </template>
 
 <script>
+import moment from 'moment';
 import { ethers } from 'ethers';
 import AppAlert from '@/components/AppAlert.vue';
 import MushroomFarm from '@/contracts/MushroomFarm.json';
@@ -134,9 +159,12 @@ export default {
      */
     web3Provider: null,
     account: '',
+    startTime: '',
     contractBalance: '',
     walletBalance: '',
     mushroomCount: '',
+    remainingTime: null,
+    remainingSeconds: '',
     /**
      * form data
      */
@@ -171,19 +199,40 @@ export default {
     },
     loadWeb3Provider() {
       this.web3Provider = new ethers.providers.Web3Provider(window.ethereum);
-      this.web3Provider.provider.on('accountChanged', () => this.init());
+      this.web3Provider.provider.on('accountsChanged', () => this.init());
     },
     async loadAccount() {
       const [account] = await this.web3Provider.send('eth_requestAccounts');
       this.account = account;
     },
     async loadData() {
+      const startTime = await this.contract.startTime();
+      let duration = moment.duration((startTime - (+new Date()) / 1000) * 1000, 'milliseconds');
+      setInterval(() => {
+        duration = moment.duration(duration - 1000, 'milliseconds');
+        this.remainingTime = {
+          days: Math.floor(duration.asDays()),
+          hours: duration.hours(),
+          minutes: duration.minutes(),
+          seconds: duration.seconds(),
+        };
+        this.remainingSeconds = Math.floor(duration.asSeconds());
+      }, 1000);
       this.contractBalance = Number(await this.contract.getBalance() / ethers.BigNumber.from(10).pow(this.decimals)).toFixed(3);
       this.walletBalance = Number(await this.web3Provider.getBalance(this.account) / ethers.BigNumber.from(10).pow(this.decimals)).toFixed(3);
       this.mushroomCount = Number(await this.contract.getMyMushrooms()).toLocaleString();
+      const claimedMushrooms = await this.contract.claimedMushrooms(this.account);
+      const myMushrooms = await this.getMushroomsSinceLastHarvest();
+      this.mushroomCount = claimedMushrooms + myMushrooms;
     },
     connect() {
       this.loadAccount();
+    },
+    async getMushroomsSinceLastHarvest() {
+      const period = await this.contract.period();
+      const lastHarvest = await this.contract.lastHarvest(this.account);
+      const farmers = await this.contract.farmers(this.account);
+      return Math.min(period, Math.floor(+new Date() / 1000) - lastHarvest) * farmers;
     },
     async buyMushrooms() {
       const amount = ethers.BigNumber.from(1).mul(ethers.FixedNumber.fromString(this.amount));
@@ -196,3 +245,10 @@ export default {
   },
 };
 </script>
+
+<style lang="scss">
+input::-webkit-outer-spin-button,
+input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+}
+</style>
